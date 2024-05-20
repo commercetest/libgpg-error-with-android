@@ -123,10 +123,12 @@ Libgpg-error needs to figure out some platform specific properties.
 These are used to build the platform specific gpg-error.h file.  The
 detection is done during build time but can't be done when
 cross-compiling.  Thus if you run into an error during building you
-need to figure out these values.  You may use these commands:
+need to figure out these values.  You may use these commands for many 
+platforms (for Android is described in the next section):
 
+  ./autogen.sh
   build="$(build-aux/config.guess)"
-  ./configure --prefix=TARGETDIR --host=TARGET --build=$build
+  ./configure --prefix=$TARGETDIR --host=$TARGET --build=$build
   cd src
   make gen-posix-lock-obj
   scp gen-posix-lock-obj TARGET:
@@ -139,6 +141,89 @@ please send the generated file to the gnupg-devel mailing list so that
 we can include it in the next release.  Note that in addition to the
 aliasing done by config.sub the src/mkheader build tool does some
 extra aliasing to avoid having too much identical syscfg files.
+
+Cross-compiling for Android
+---------------------------
+The cross-compilation uses similar steps to those described above
+adapted to use the Android SDK's `adb` commands and with a tweak 
+naming the header file that was generated on an Android device. 
+Examples follow later in this section. 
+
+The Android NDK needs installing in addition to other Android 
+development packages and tools. The build envionment then needs
+configuring. Google documents this in 
+https://developer.android.com/ndk/guides/other_build_systems
+
+```
+# Here this version of the NDK is already installed on the development machine.
+export NDK=$HOME/android-studio/ndk/25.1.8937393/
+echo $NDK
+
+# The API needs to be installed as an Android package on your development machine.
+export API=33
+
+
+# Pick one of the 4 examples for the target
+export TARGET=armv7a-linux-androideabi
+
+export AR=$TOOLCHAIN/bin/llvm-ar
+export CC=$TOOLCHAIN/bin/$TARGET$API-clang
+export AS=$CC
+export CXX=$TOOLCHAIN/bin/$TARGET$API-clang++
+export LD=$TOOLCHAIN/bin/ld
+export RANLIB=$TOOLCHAIN/bin/llvm-ranlib
+export STRIP=$TOOLCHAIN/bin/llvm-strip
+```
+
+```
+./autogen.sh 
+./configure --prefix=/tmp/gnunet/ --host=$TARGET --build=$build --enable-maintainer-mode
+cd src
+make gen-posix-lock-obj
+```
+
+```
+# discover which Android devices (emulators and/or physical devices) are available to use
+adb devices
+
+# from the list of devices, pick the serial number and use it in the next 3 steps
+adb -s FRTBB80301420573 push gen-posix-lock-obj /data/local/tmp
+adb -s FRTBB80301420573 shell
+# adb shell is similar to an SSH session
+
+# After closing the adb shell, retrieve the generated header file
+adb -s FRTBB80301420573 pull /data/local/tmp/tmp.h .
+
+# This is a debugging step
+awk 'NR==1 {print $2}' tmp.h
+# followed by renaming and relocating the file using the contents of the first line 
+mv tmp.h "syscfg/$(awk 'NR==1 {print $2}' tmp.h)"
+
+# As the generated file on Android includes some extraneous information 
+# the file name isn't as expected; so we make a copy to a suitable name
+cd syscfg/
+ls -lart
+cp lock-obj-pub.armv7a-unknown-linux-androideabi.h lock-obj-pub.linux-android.h
+
+# Continue the standard make process
+cd ../..
+make
+
+# Check the architecture of the generated so file, it should match the
+# Android target architecture
+file ./src/.libs/libgpg-error.so
+```
+
+Android currently supports x86 and ARM 32-bit and 64-bit architectures
+and emulators as well as physical devices. The generated file for both
+64-bit architectures is identical:
+
+`diff src/syscfg/lock-obj-pub.x86_64-pc-linux-android.h src/syscfg/lock-obj-pub.aarch64-unknown-linux-android.h`
+
+but the 32-bit and 64-bit files differ:
+
+`diff lock-obj-pub.armv7a-unknown-linux-androideabi.h lock-obj-pub.aarch64-unknown-linux-android.h`
+
 
 
 
