@@ -217,7 +217,7 @@ do_create_pipe_and_estream (int filedes[2], estream_t *r_fp,
   if (pipe (filedes) == -1)
     {
       err = _gpg_err_code_from_syserror ();
-      _gpgrt_log_error (_("error creating a pipe: %s\n"), _gpg_strerror (err));
+      _gpgrt_log_info (_("error creating a pipe: %s\n"), _gpg_strerror (err));
       filedes[0] = filedes[1] = -1;
       *r_fp = NULL;
       return err;
@@ -231,7 +231,7 @@ do_create_pipe_and_estream (int filedes[2], estream_t *r_fp,
   if (!*r_fp)
     {
       err = _gpg_err_code_from_syserror ();
-      _gpgrt_log_error (_("error creating a stream for a pipe: %s\n"),
+      _gpgrt_log_info (_("error creating a stream for a pipe: %s\n"),
                         _gpg_strerror (err));
       close (filedes[0]);
       close (filedes[1]);
@@ -295,7 +295,7 @@ struct gpgrt_spawn_actions {
   void *atfork_arg;
 };
 
-static void
+static int
 my_exec (const char *pgmname, const char *argv[], gpgrt_spawn_actions_t act)
 {
   int i;
@@ -328,9 +328,14 @@ my_exec (const char *pgmname, const char *argv[], gpgrt_spawn_actions_t act)
   if (act->atfork)
     act->atfork (act->atfork_arg);
 
+  /* This use case is for assuan pipe connect with no PGMNAME */
+  if (pgmname == NULL)
+    return 0;
+
   execv (pgmname, (char *const *)argv);
   /* No way to print anything, as we have may have closed all streams. */
   _exit (127);
+  return -1;
 }
 
 
@@ -361,7 +366,7 @@ spawn_detached (const char *pgmname, const char *argv[],
   if (pid == (pid_t)(-1))
     {
       ec = _gpg_err_code_from_syserror ();
-      _gpgrt_log_error (_("error forking process: %s\n"), _gpg_strerror (ec));
+      _gpgrt_log_info (_("error forking process: %s\n"), _gpg_strerror (ec));
       xfree (argv);
       return ec;
     }
@@ -388,7 +393,7 @@ spawn_detached (const char *pgmname, const char *argv[],
     {
       _gpgrt_post_syscall ();
       ec = _gpg_err_code_from_syserror ();
-      _gpgrt_log_error ("waitpid failed in gpgrt_spawn_process_detached: %s",
+      _gpgrt_log_info ("waitpid failed in gpgrt_spawn_process_detached: %s",
                         _gpg_strerror (ec));
       return ec;
     }
@@ -502,7 +507,8 @@ _gpgrt_process_spawn (const char *pgmname, const char *argv1[],
   argv = xtrycalloc (i+2, sizeof *argv);
   if (!argv)
     return _gpg_err_code_from_syserror ();
-  argv[0] = strrchr (pgmname, '/');
+  if (pgmname)
+    argv[0] = strrchr (pgmname, '/');
   if (argv[0])
     argv[0]++;
   else
@@ -521,7 +527,7 @@ _gpgrt_process_spawn (const char *pgmname, const char *argv1[],
         }
 
       /* In detached case, it must be no R_PROCESS.  */
-      if (r_process)
+      if (r_process || pgmname == NULL)
         {
           xfree (argv);
           return GPG_ERR_INV_ARG;
@@ -636,7 +642,7 @@ _gpgrt_process_spawn (const char *pgmname, const char *argv1[],
   if (pid == (pid_t)(-1))
     {
       ec = _gpg_err_code_from_syserror ();
-      _gpgrt_log_error (_("error forking process: %s\n"), _gpg_strerror (ec));
+      _gpgrt_log_info (_("error forking process: %s\n"), _gpg_strerror (ec));
       if (fd_in[0] >= 0 && fd_in[0] != 0)
         close (fd_in[0]);
       if (fd_in[1] >= 0)
@@ -671,7 +677,14 @@ _gpgrt_process_spawn (const char *pgmname, const char *argv1[],
         act->fd[2] = fd_err[1];
 
       /* Run child. */
-      my_exec (pgmname, argv, act);
+      if (!my_exec (pgmname, argv, act))
+        {
+          xfree (process);
+          xfree (argv);
+          *r_process = NULL;
+          return 0;
+        }
+
       /*NOTREACHED*/
     }
 
@@ -769,8 +782,9 @@ _gpgrt_process_get_streams (gpgrt_process_t process, unsigned int flags,
   return 0;
 }
 
-static gpg_err_code_t
-process_vctl (gpgrt_process_t process, unsigned int request, va_list arg_ptr)
+gpg_err_code_t
+_gpgrt_process_vctl (gpgrt_process_t process, unsigned int request,
+                     va_list arg_ptr)
 {
   switch (request)
     {
@@ -870,18 +884,6 @@ process_vctl (gpgrt_process_t process, unsigned int request, va_list arg_ptr)
 }
 
 gpg_err_code_t
-_gpgrt_process_ctl (gpgrt_process_t process, unsigned int request, ...)
-{
-  va_list arg_ptr;
-  gpg_err_code_t ec;
-
-  va_start (arg_ptr, request);
-  ec = process_vctl (process, request, arg_ptr);
-  va_end (arg_ptr);
-  return ec;
-}
-
-gpg_err_code_t
 _gpgrt_process_wait (gpgrt_process_t process, int hang)
 {
   gpg_err_code_t ec;
@@ -900,7 +902,7 @@ _gpgrt_process_wait (gpgrt_process_t process, int hang)
   if (pid == (pid_t)(-1))
     {
       ec = _gpg_err_code_from_syserror ();
-      _gpgrt_log_error (_("waiting for process %d to terminate failed: %s\n"),
+      _gpgrt_log_info (_("waiting for process %d failed: %s\n"),
                         (int)pid, _gpg_strerror (ec));
     }
   else if (!pid)

@@ -194,7 +194,7 @@ create_inheritable_pipe (HANDLE filedes[2], int flags)
   return 0;
 
  fail:
-  _gpgrt_log_error ("SetHandleInformation failed: ec=%d\n",
+  _gpgrt_log_info ("SetHandleInformation failed: ec=%d\n",
                     (int)GetLastError ());
   CloseHandle (r);
   CloseHandle (w);
@@ -240,7 +240,7 @@ do_create_pipe_and_estream (int filedes[2],
       filedes[0] = _open_osfhandle (handle_to_fd (fds[0]), O_RDONLY);
       if (filedes[0] == -1)
         {
-          _gpgrt_log_error ("failed to translate osfhandle %p\n", fds[0]);
+          _gpgrt_log_info ("failed to translate osfhandle %p\n", fds[0]);
           CloseHandle (fds[1]);
         }
       else
@@ -248,7 +248,7 @@ do_create_pipe_and_estream (int filedes[2],
           filedes[1] = _open_osfhandle (handle_to_fd (fds[1]), O_APPEND);
           if (filedes[1] == -1)
             {
-              _gpgrt_log_error ("failed to translate osfhandle %p\n", fds[1]);
+              _gpgrt_log_info ("failed to translate osfhandle %p\n", fds[1]);
               close (filedes[0]);
               filedes[0] = -1;
               CloseHandle (fds[1]);
@@ -274,7 +274,7 @@ do_create_pipe_and_estream (int filedes[2],
       if (!*r_fp)
         {
           err = _gpg_err_code_from_syserror ();
-          _gpgrt_log_error (_("error creating a stream for a pipe: %s\n"),
+          _gpgrt_log_info (_("error creating a stream for a pipe: %s\n"),
                             _gpg_strerror (err));
           close (filedes[0]);
           close (filedes[1]);
@@ -376,7 +376,7 @@ spawn_detached (const char *pgmname, char *cmdline, gpgrt_spawn_actions_t act)
   if (i != 0 || act->inherit_hds)
     {
       SIZE_T attr_list_size = 0;
-      HANDLE hd[16];
+      HANDLE hd[32];
       HANDLE *hd_p = act->inherit_hds;
       int j = 0;
 
@@ -384,7 +384,7 @@ spawn_detached (const char *pgmname, char *cmdline, gpgrt_spawn_actions_t act)
         hd[j++] = act->hd[0];
       if (act->hd[1] != INVALID_HANDLE_VALUE)
         hd[j++] = act->hd[1];
-      if (act->hd[1] != INVALID_HANDLE_VALUE)
+      if (act->hd[2] != INVALID_HANDLE_VALUE)
         hd[j++] = act->hd[2];
       if (hd_p)
         {
@@ -393,7 +393,7 @@ spawn_detached (const char *pgmname, char *cmdline, gpgrt_spawn_actions_t act)
               hd[j++] = *hd_p++;
             else
               {
-                _gpgrt_log_error ("Too much handles\n");
+                _gpgrt_log_info ("gpgrt_spawn_detached: too many handles\n");
                 break;
               }
         }
@@ -458,10 +458,12 @@ spawn_detached (const char *pgmname, char *cmdline, gpgrt_spawn_actions_t act)
   if (!ret)
     {
       if (!wpgmname || !wcmdline)
-        _gpgrt_log_error ("CreateProcess failed (utf8_to_wchar): %s\n",
+        _gpgrt_log_info ("gpgrt_spawn_detached: "
+                         "CreateProcess failed (utf8_to_wchar): %s\n",
                           strerror (errno));
       else
-        _gpgrt_log_error ("CreateProcess(detached) failed: %d\n",
+        _gpgrt_log_info ("gpgrt_spawn_detached: "
+                         "CreateProcess(detached) failed: %d\n",
                           (int)GetLastError ());
       xfree (wpgmname);
       xfree (wcmdline);
@@ -584,7 +586,7 @@ _gpgrt_process_spawn (const char *pgmname, const char *argv[],
         }
 
       /* In detached case, it must be no R_PROCESS.  */
-      if (r_process)
+      if (r_process || pgmname == NULL)
         {
           xfree (cmdline);
           return GPG_ERR_INV_ARG;
@@ -595,6 +597,12 @@ _gpgrt_process_spawn (const char *pgmname, const char *argv[],
 
   if (r_process)
     *r_process = NULL;
+
+  if (pgmname == NULL)
+    {
+      xfree (cmdline);
+      return GPG_ERR_INV_ARG;
+    }
 
   process = xtrymalloc (sizeof (struct gpgrt_process));
   if (process == NULL)
@@ -708,7 +716,7 @@ _gpgrt_process_spawn (const char *pgmname, const char *argv[],
   if (i != 0 || act->inherit_hds)
     {
       SIZE_T attr_list_size = 0;
-      HANDLE hd[16];
+      HANDLE hd[32];
       HANDLE *hd_p = act->inherit_hds;
       int j = 0;
 
@@ -716,7 +724,7 @@ _gpgrt_process_spawn (const char *pgmname, const char *argv[],
         hd[j++] = act->hd[0];
       if (act->hd[1] != INVALID_HANDLE_VALUE)
         hd[j++] = act->hd[1];
-      if (act->hd[1] != INVALID_HANDLE_VALUE)
+      if (act->hd[2] != INVALID_HANDLE_VALUE)
         hd[j++] = act->hd[2];
       if (hd_p)
         {
@@ -725,7 +733,7 @@ _gpgrt_process_spawn (const char *pgmname, const char *argv[],
               hd[j++] = *hd_p++;
             else
               {
-                _gpgrt_log_error ("Too much handles\n");
+                _gpgrt_log_info ("gpgrt_process_spawn: too many handles\n");
                 break;
               }
         }
@@ -774,7 +782,8 @@ _gpgrt_process_spawn (const char *pgmname, const char *argv[],
 
   /* Start the process.  */
   si.StartupInfo.cb = sizeof (si);
-  si.StartupInfo.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
+  si.StartupInfo.dwFlags = ((i > 0 ? STARTF_USESTDHANDLES : 0)
+                            | STARTF_USESHOWWINDOW);
   si.StartupInfo.wShowWindow = DEBUG_W32_SPAWN? SW_SHOW : SW_HIDE;
   si.StartupInfo.hStdInput  = act->hd[0];
   si.StartupInfo.hStdOutput = act->hd[1];
@@ -782,6 +791,7 @@ _gpgrt_process_spawn (const char *pgmname, const char *argv[],
 
   /* log_debug ("CreateProcess, path='%s' cmdline='%s'\n", pgmname, cmdline); */
   cr_flags = (CREATE_DEFAULT_ERROR_MODE
+              | ((flags & GPGRT_PROCESS_NO_CONSOLE) ? DETACHED_PROCESS : 0)
               | GetPriorityClass (GetCurrentProcess ())
               | CREATE_SUSPENDED);
   if (!(wpgmname = _gpgrt_utf8_to_wchar (pgmname)))
@@ -803,10 +813,10 @@ _gpgrt_process_spawn (const char *pgmname, const char *argv[],
   if (!ret)
     {
       if (!wpgmname || !wcmdline)
-        _gpgrt_log_error ("CreateProcess failed (utf8_to_wchar): %s\n",
+        _gpgrt_log_info ("CreateProcess failed (utf8_to_wchar): %s\n",
                           strerror (errno));
       else
-        _gpgrt_log_error ("CreateProcess failed: ec=%d\n",
+        _gpgrt_log_info ("CreateProcess failed: ec=%d\n",
                           (int)GetLastError ());
       if ((flags & GPGRT_PROCESS_STDIN_PIPE)
           || !(flags & GPGRT_PROCESS_STDIN_KEEP))
@@ -951,8 +961,9 @@ process_kill (gpgrt_process_t process, unsigned int exitcode)
   return ec;
 }
 
-static gpg_err_code_t
-process_vctl (gpgrt_process_t process, unsigned int request, va_list arg_ptr)
+gpg_err_code_t
+_gpgrt_process_vctl (gpgrt_process_t process, unsigned int request,
+                     va_list arg_ptr)
 {
   switch (request)
     {
@@ -1065,18 +1076,6 @@ process_vctl (gpgrt_process_t process, unsigned int request, va_list arg_ptr)
 }
 
 gpg_err_code_t
-_gpgrt_process_ctl (gpgrt_process_t process, unsigned int request, ...)
-{
-  va_list arg_ptr;
-  gpg_err_code_t ec;
-
-  va_start (arg_ptr, request);
-  ec = process_vctl (process, request, arg_ptr);
-  va_end (arg_ptr);
-  return ec;
-}
-
-gpg_err_code_t
 _gpgrt_process_wait (gpgrt_process_t process, int hang)
 {
   gpg_err_code_t ec;
@@ -1096,8 +1095,8 @@ _gpgrt_process_wait (gpgrt_process_t process, int hang)
       break;
 
     case WAIT_FAILED:
-      _gpgrt_log_error (_("waiting for process to terminate failed: ec=%d\n"),
-                        (int)GetLastError ());
+      _gpgrt_log_info (_("waiting for process failed: ec=%d\n"),
+                       (int)GetLastError ());
       ec = GPG_ERR_GENERAL;
       break;
 
